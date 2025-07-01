@@ -7,6 +7,7 @@
     body { font-family: sans-serif; max-width: 600px; margin: 3em auto; }
     pre { background: #111; color: #eee; padding: 1em; }
     button { font-size: 1.1em; }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
@@ -15,9 +16,12 @@
   <pre id="token"></pre>
   <button id="createSessionBtn" disabled>Create Hyperbeam Session</button>
   <pre id="session"></pre>
+  <button id="terminateSessionBtn" class="hidden">Terminate Hyperbeam Session</button>
+  <pre id="terminateStatus"></pre>
 
   <script>
     let csrfToken = "";
+    let sessionId = "";
 
     document.getElementById("getTokenBtn").onclick = async () => {
       const res = await fetch("/api/vm/csrf-token");
@@ -25,10 +29,14 @@
       csrfToken = data.csrfToken;
       document.getElementById("token").textContent = csrfToken;
       document.getElementById("createSessionBtn").disabled = false;
+      document.getElementById("terminateSessionBtn").classList.add("hidden");
+      document.getElementById("terminateStatus").textContent = "";
+      document.getElementById("session").textContent = "";
     };
 
     document.getElementById("createSessionBtn").onclick = async () => {
       document.getElementById("session").textContent = "Loading...";
+      document.getElementById("terminateStatus").textContent = "";
       const res = await fetch("/api/vm/create", {
         method: "POST",
         headers: {
@@ -40,6 +48,36 @@
       document.getElementById("session").textContent = JSON.stringify(data, null, 2);
       if (data.embed_url) {
         document.getElementById("session").innerHTML += `<br><a href="${data.embed_url}" target="_blank">Open Hyperbeam</a>`;
+        sessionId = data.session_id;
+        document.getElementById("terminateSessionBtn").classList.remove("hidden");
+      } else {
+        sessionId = "";
+        document.getElementById("terminateSessionBtn").classList.add("hidden");
+      }
+    };
+
+    document.getElementById("terminateSessionBtn").onclick = async () => {
+      if (!sessionId) {
+        document.getElementById("terminateStatus").textContent = "No session to terminate.";
+        return;
+      }
+      document.getElementById("terminateStatus").textContent = "Terminating session...";
+      const res = await fetch("/api/vm/terminate", {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ sessionId })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById("terminateStatus").textContent = "Session terminated!";
+        document.getElementById("terminateSessionBtn").classList.add("hidden");
+        document.getElementById("session").textContent += "\nSession terminated.";
+        sessionId = "";
+      } else {
+        document.getElementById("terminateStatus").textContent = "Failed to terminate: " + (data.error || "Unknown error");
       }
     };
   </script>
