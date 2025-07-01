@@ -56,9 +56,13 @@
     let csrfToken = null;
 
     async function getCsrfToken() {
-      const res = await fetch('/api/vm/csrf-token');
-      const json = await res.json();
-      csrfToken = json.csrfToken;
+      try {
+        const res = await fetch('/api/vm/csrf-token');
+        const json = await res.json();
+        csrfToken = json.csrfToken;
+      } catch (e) {
+        setStatus("Failed to get CSRF token", true);
+      }
     }
 
     function setStatus(msg, error = false) {
@@ -79,8 +83,13 @@
         body: JSON.stringify({})
       });
       const data = await res.json();
+      console.log("Session start response:", data);
       if (!res.ok) {
         setStatus("Error: " + (data.error || "Unknown error"), true);
+        return;
+      }
+      if (!data.id || !data.url || !data.expiresAt) {
+        setStatus("Backend error: missing session data.", true);
         return;
       }
       sessionId = data.id;
@@ -162,8 +171,6 @@
 
     document.getElementById('create-btn').onclick = createSession;
     document.getElementById('terminate-btn').onclick = terminateSession;
-
-    // Optionally, warn on inactivity (no UI, just backend auto-terminates)
   </script>
 </body>
 </html>
