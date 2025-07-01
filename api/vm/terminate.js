@@ -14,9 +14,11 @@ export default async function handler(req, res) {
     const cookies = cookie.parse(req.headers.cookie || "");
     const secret = cookies.csrfSecret;
     const csrfToken = req.headers["x-csrf-token"];
+    console.log("Cookies:", cookies, "CSRF Secret:", secret, "CSRF Token:", csrfToken);
 
     // Validate CSRF
     if (!secret || !csrfToken || !tokens.verify(secret, csrfToken)) {
+      console.error("CSRF validation failed");
       res.status(403).json({ error: "Invalid CSRF token" });
       return;
     }
@@ -26,7 +28,9 @@ export default async function handler(req, res) {
     try {
       const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
       sessionId = body.sessionId;
-    } catch {
+      console.log("Session ID:", sessionId);
+    } catch (e) {
+      console.error("JSON parse error", e);
       res.status(400).json({ error: "Invalid JSON body" });
       return;
     }
@@ -39,6 +43,7 @@ export default async function handler(req, res) {
     // Hyperbeam API key
     const HB_API_KEY = process.env.HYPERBEAM_API_KEY;
     if (!HB_API_KEY) {
+      console.error("Missing Hyperbeam API key");
       res.status(500).json({ error: "Missing Hyperbeam API key" });
       return;
     }
