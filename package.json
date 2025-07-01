@@ -1,0 +1,8 @@
+{
+  "name": "vercel-hyperbeam-csrf-demo",
+  "version": "1.0.0",
+  "dependencies": {
+    "csrf": "^3.1.0",
+    "cookie": "^0.6.0"
+  }
+}
