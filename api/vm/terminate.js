@@ -5,6 +5,7 @@ const tokens = new Tokens();
 
 export default async function handler(req, res) {
   try {
+    // Only allow POST
     if (req.method !== "POST") {
       res.status(405).json({ error: "Method not allowed" });
       return;
@@ -14,27 +15,22 @@ export default async function handler(req, res) {
     const cookies = cookie.parse(req.headers.cookie || "");
     const secret = cookies.csrfSecret;
     const csrfToken = req.headers["x-csrf-token"];
-    console.log("Cookies:", cookies, "CSRF Secret:", secret, "CSRF Token:", csrfToken);
 
     // Validate CSRF
     if (!secret || !csrfToken || !tokens.verify(secret, csrfToken)) {
-      console.error("CSRF validation failed");
       res.status(403).json({ error: "Invalid CSRF token" });
       return;
     }
 
-    // Session ID from body
+    // Parse and check body
     let sessionId;
     try {
       const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
       sessionId = body.sessionId;
-      console.log("Session ID:", sessionId);
     } catch (e) {
-      console.error("JSON parse error", e);
       res.status(400).json({ error: "Invalid JSON body" });
       return;
     }
-
     if (!sessionId) {
       res.status(400).json({ error: "Missing sessionId" });
       return;
@@ -43,7 +39,6 @@ export default async function handler(req, res) {
     // Hyperbeam API key
     const HB_API_KEY = process.env.HYPERBEAM_API_KEY;
     if (!HB_API_KEY) {
-      console.error("Missing Hyperbeam API key");
       res.status(500).json({ error: "Missing Hyperbeam API key" });
       return;
     }
@@ -57,18 +52,21 @@ export default async function handler(req, res) {
       }
     });
 
+    // Interpret the Hyperbeam response
     const text = await hbRes.text();
-    if (!hbRes.ok) {
-      // Log the actual error for debugging
-      console.error("Hyperbeam API terminate error:", hbRes.status, text);
-      res.status(500).json({ error: "Failed to terminate Hyperbeam session", details: text });
+    if (hbRes.ok) {
+      res.status(200).json({ ok: true });
       return;
     }
-
-    res.status(200).json({ ok: true });
+    // Treat 404 as idempotent "already terminated"
+    if (hbRes.status === 404) {
+      res.status(200).json({ ok: true, note: "Session already terminated or not found (404 from Hyperbeam)." });
+      return;
+    }
+    // Other errors
+    res.status(500).json({ error: "Failed to terminate Hyperbeam session", details: text });
   } catch (err) {
-    // Catch any unexpected errors and send a JSON error
-    console.error("API /api/vm/terminate crashed:", err);
+    // Unexpected errors
     res.status(500).json({ error: "API crashed", details: err.message });
   }
 }
