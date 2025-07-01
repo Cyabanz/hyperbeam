@@ -39,7 +39,6 @@
     Sessions auto-terminate after <strong>4 minutes</strong><br>
     If you are inactive for <strong>30 seconds</strong>, your session will end early.
   </div>
-
   <button id="create-btn">Create Session</button>
   <button id="terminate-btn" class="hidden">Terminate Session</button>
   <div id="timer-bar" class="hidden">
@@ -47,7 +46,6 @@
   </div>
   <div id="status"></div>
   <iframe id="hb-frame" class="hidden"></iframe>
-
   <script>
     let sessionId = null;
     let expiresAt = null;
@@ -56,13 +54,9 @@
     let csrfToken = null;
 
     async function getCsrfToken() {
-      try {
-        const res = await fetch('/api/vm/csrf-token');
-        const json = await res.json();
-        csrfToken = json.csrfToken;
-      } catch (e) {
-        setStatus("Failed to get CSRF token", true);
-      }
+      const res = await fetch('/api/vm/csrf-token');
+      const json = await res.json();
+      csrfToken = json.csrfToken;
     }
 
     function setStatus(msg, error = false) {
@@ -83,9 +77,8 @@
         body: JSON.stringify({})
       });
       const data = await res.json();
-      console.log("Session start response:", data);
       if (!res.ok) {
-        setStatus("Error: " + (data.error || "Unknown error"), true);
+        setStatus("Error: " + (data.error || "Unknown error") + (data.details ? "\nDetails: " + JSON.stringify(data.details) : ""), true);
         return;
       }
       if (!data.id || !data.url || !data.expiresAt) {
