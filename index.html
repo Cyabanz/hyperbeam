@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Vercel Hyperbeam CSRF Demo</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 3em auto; }
+    pre { background: #111; color: #eee; padding: 1em; }
+    button { font-size: 1.1em; }
+  </style>
+</head>
+<body>
+  <h1>Hyperbeam + CSRF Demo</h1>
+  <button id="getTokenBtn">Get CSRF Token</button>
+  <pre id="token"></pre>
+  <button id="createSessionBtn" disabled>Create Hyperbeam Session</button>
+  <pre id="session"></pre>
+
+  <script>
+    let csrfToken = "";
+
+    document.getElementById("getTokenBtn").onclick = async () => {
+      const res = await fetch("/api/vm/csrf-token");
+      const data = await res.json();
+      csrfToken = data.csrfToken;
+      document.getElementById("token").textContent = csrfToken;
+      document.getElementById("createSessionBtn").disabled = false;
+    };
+
+    document.getElementById("createSessionBtn").onclick = async () => {
+      document.getElementById("session").textContent = "Loading...";
+      const res = await fetch("/api/vm/create", {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "Content-Type": "application/json"
+        }
+      });
+      const data = await res.json();
+      document.getElementById("session").textContent = JSON.stringify(data, null, 2);
+      if (data.embed_url) {
+        document.getElementById("session").innerHTML += `<br><a href="${data.embed_url}" target="_blank">Open Hyperbeam</a>`;
+      }
+    };
+  </script>
+</body>
+</html>
