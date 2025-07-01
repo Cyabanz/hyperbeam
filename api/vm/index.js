@@ -6,6 +6,7 @@ const sessionStore = global.sessionStore || (global.sessionStore = {});
 
 export default async function handler(req, res) {
   if (req.method === "POST") {
+    // CSRF protection
     const cookies = cookie.parse(req.headers.cookie || "");
     const secret = cookies.csrfSecret;
     const csrfToken = req.headers["x-csrf-token"];
@@ -14,6 +15,7 @@ export default async function handler(req, res) {
       return;
     }
 
+    // Call Hyperbeam to create session
     const HB_API_KEY = process.env.HYPERBEAM_API_KEY;
     if (!HB_API_KEY) {
       res.status(500).json({ error: "Missing Hyperbeam API key" });
@@ -29,34 +31,33 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({}),
       });
+      const data = await hbRes.json();
       if (!hbRes.ok) {
-        const err = await hbRes.text();
-        res.status(500).json({ error: "Failed to create Hyperbeam session", details: err });
+        res.status(500).json({ error: "Failed to create Hyperbeam session", details: JSON.stringify(data) });
         return;
       }
-      const data = await hbRes.json();
       const sessionId = data.id;
-      const sessionUrl = data.url;
       const now = Date.now();
 
+      // Setup 4-min hard limit timer
       const limitTimer = setTimeout(() => terminateSession(sessionId), 4 * 60 * 1000);
+
+      // Setup 30s inactivity timer
       let inactivityTimer = setTimeout(() => terminateSession(sessionId), 30 * 1000);
 
+      // Store timers
       sessionStore[sessionId] = {
         limitTimer,
         inactivityTimer,
         lastActive: now,
       };
 
-      res.status(200).json({
-        id: sessionId,
-        url: sessionUrl,
-        expiresAt: now + 4 * 60 * 1000
-      });
+      res.status(200).json({ id: sessionId, url: data.url, expiresAt: now + 4 * 60 * 1000 });
     } catch (err) {
       res.status(500).json({ error: "Exception creating session", details: err.message });
     }
   } else if (req.method === "PATCH") {
+    // PATCH: User activity ping to reset inactivity timer
     let body;
     try {
       body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
@@ -70,12 +71,14 @@ export default async function handler(req, res) {
       res.status(404).json({ error: "Session not found or already terminated" });
       return;
     }
-
+    // Reset inactivity timer
     clearTimeout(session.inactivityTimer);
     session.inactivityTimer = setTimeout(() => terminateSession(sessionId), 30 * 1000);
     session.lastActive = Date.now();
     res.status(200).json({ ok: true });
   } else if (req.method === "DELETE") {
+    // DELETE: Explicit session termination
+    // CSRF protection
     const cookies = cookie.parse(req.headers.cookie || "");
     const secret = cookies.csrfSecret;
     const csrfToken = req.headers["x-csrf-token"];
@@ -107,6 +110,7 @@ export default async function handler(req, res) {
         headers: { Authorization: `Bearer ${HB_API_KEY}` },
       });
 
+      // Clean up timers
       if (sessionStore[sessionId]) {
         clearTimeout(sessionStore[sessionId].limitTimer);
         clearTimeout(sessionStore[sessionId].inactivityTimer);
