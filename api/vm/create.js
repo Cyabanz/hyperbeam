@@ -21,15 +21,12 @@ export default async function handler(req, res) {
   }
 
   // --- Hyperbeam API Call ---
-  // You MUST set your Hyperbeam API key in your Vercel project env vars
   const HB_API_KEY = process.env.HYPERBEAM_API_KEY;
-
   if (!HB_API_KEY) {
     res.status(500).json({ error: "Missing Hyperbeam API key" });
     return;
   }
 
-  // Create the VM
   try {
     const hbRes = await fetch("https://engine.hyperbeam.com/v0/vm", {
       method: "POST",
@@ -39,13 +36,31 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({}) // Add options if needed
     });
+
     const data = await hbRes.json();
+
+    // If Hyperbeam did not return success, show the error
+    if (!hbRes.ok) {
+      return res.status(hbRes.status).json({
+        error: "Hyperbeam API error",
+        details: data.error || data.message || data
+      });
+    }
+
+    // Check required fields
+    if (!data.embed_url || !data.session_id || !data.admin_token) {
+      return res.status(500).json({
+        error: "Malformed Hyperbeam response",
+        details: data
+      });
+    }
+
     res.status(200).json({
       embed_url: data.embed_url,
       session_id: data.session_id,
       admin_token: data.admin_token,
     });
   } catch (err) {
-    res.status(500).json({ error: "Failed to create Hyperbeam session" });
+    res.status(500).json({ error: "Failed to create Hyperbeam session", details: err.message });
   }
 }
