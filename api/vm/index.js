@@ -41,8 +41,8 @@ async function terminateHyperbeamSession(sessionId) {
   if (!apiKey) return false;
   
   try {
-    const response = await fetch(`https://engine.hyperbeam.com/v0/vm/${sessionId}/terminate`, {
-      method: "POST",
+    const response = await fetch(`https://engine.hyperbeam.com/v0/vm/${sessionId}`, {
+      method: "DELETE",
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     return response.ok || response.status === 404; // 404 means already terminated
@@ -156,10 +156,15 @@ module.exports = async function handler(req, res) {
       console.log("🎯 Attempting to create Hyperbeam session...");
       
       try {
+        // Format request according to Hyperbeam API v0 documentation
         const requestBody = {
-          timeout: Math.floor(SESSION_DURATION / 1000) // Set timeout in seconds
+          timeout: {
+            absolute: Math.floor(SESSION_DURATION / 1000), // 4 minutes in seconds
+            inactive: Math.floor(INACTIVITY_TIMEOUT / 1000), // 30 seconds
+            offline: 3600 // 1 hour (default)
+          }
         };
-        console.log("📤 Request body:", requestBody);
+        console.log("📤 Request body:", JSON.stringify(requestBody, null, 2));
         
         const hyperbeamResponse = await fetch("https://engine.hyperbeam.com/v0/vm", {
           method: "POST",
@@ -184,9 +189,11 @@ module.exports = async function handler(req, res) {
         const sessionData = await hyperbeamResponse.json();
         console.log("📦 Session data received:", JSON.stringify(sessionData, null, 2));
         
-        const sessionId = sessionData.id;
+        // Hyperbeam API returns session_id, embed_url, admin_token
+        const sessionId = sessionData.session_id;
+        const embedUrl = sessionData.embed_url;
         
-        if (!sessionId || !sessionData.url) {
+        if (!sessionId || !embedUrl) {
           console.error('❌ Invalid session data:', sessionData);
           return res.status(500).json({ error: "Invalid session data received" });
         }
@@ -209,7 +216,7 @@ module.exports = async function handler(req, res) {
           expiresAt,
           limitTimer,
           inactivityTimer,
-          url: sessionData.url
+          url: embedUrl
         };
         
         sessionStore.set(sessionId, session);
@@ -221,7 +228,7 @@ module.exports = async function handler(req, res) {
 
         return res.status(200).json({
           id: sessionId,
-          url: sessionData.url,
+          url: embedUrl,
           expiresAt
         });
         
