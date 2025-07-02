@@ -6,164 +6,424 @@
   <title>Hyperbeam Session Demo</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       margin: 2rem auto;
       max-width: 600px;
       background: #f6f8fa;
       color: #222;
+      line-height: 1.6;
     }
     .hidden { display: none; }
-    .notice { background: #fff8c4; padding: 0.7em 1em; border-radius: 5px; margin-bottom: 1em; }
+    .notice { 
+      background: #fff8c4; 
+      padding: 0.7em 1em; 
+      border-radius: 8px; 
+      margin-bottom: 1em; 
+      border-left: 4px solid #f0ad4e;
+    }
+    .error-notice {
+      background: #ffe6e6;
+      border-left: 4px solid #d73a49;
+      color: #d73a49;
+    }
+    .rate-limit-notice {
+      background: #fff3cd;
+      border-left: 4px solid #856404;
+      color: #856404;
+    }
     #timer-bar {
       background: #e0e0e0;
-      border-radius: 5px;
-      height: 18px;
+      border-radius: 8px;
+      height: 20px;
       margin-bottom: 1em;
       overflow: hidden;
       width: 100%;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
     }
     #timer-progress {
-      background: #4caf50;
+      background: linear-gradient(90deg, #4caf50, #8bc34a);
       height: 100%;
       width: 100%;
       transition: width 1s linear;
+      border-radius: 8px 0 0 8px;
     }
-    button { margin: 0.5em 0; }
-    iframe { width: 100%; height: 400px; border: none; display: block; }
-    #status { font-size: 1.1em; margin: 1em 0; }
+    button { 
+      margin: 0.5em 0.5em 0.5em 0; 
+      padding: 0.75em 1.5em;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9em;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+    #create-btn {
+      background: #28a745;
+      color: white;
+    }
+    #create-btn:hover:not(:disabled) {
+      background: #218838;
+      transform: translateY(-1px);
+    }
+    #create-btn:disabled {
+      background: #6c757d;
+      cursor: not-allowed;
+      transform: none;
+    }
+    #terminate-btn {
+      background: #dc3545;
+      color: white;
+    }
+    #terminate-btn:hover {
+      background: #c82333;
+      transform: translateY(-1px);
+    }
+    iframe { 
+      width: 100%; 
+      height: 400px; 
+      border: none; 
+      display: block; 
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    #status { 
+      font-size: 1.1em; 
+      margin: 1em 0; 
+      padding: 0.5em;
+      border-radius: 6px;
+      transition: all 0.3s ease;
+    }
+    .status-error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .status-success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .status-info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+    .countdown {
+      font-weight: bold;
+      font-family: 'Courier New', monospace;
+    }
+    .session-info {
+      background: white;
+      padding: 1em;
+      border-radius: 8px;
+      margin: 1em 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 0.5em;
+    }
   </style>
 </head>
 <body>
-  <h1>Hyperbeam Session Demo</h1>
+  <h1>🚀 Hyperbeam Session Demo</h1>
   <div class="notice">
-    Sessions auto-terminate after <strong>4 minutes</strong><br>
-    If you are inactive for <strong>30 seconds</strong>, your session will end early.
+    <strong>Session Limits:</strong><br>
+    • Maximum duration: <strong>4 minutes</strong><br>
+    • Auto-terminate after <strong>30 seconds</strong> of inactivity<br>
+    • Rate limit: <strong>2 sessions per IP address</strong>
   </div>
-  <button id="create-btn">Create Session</button>
+  
+  <button id="create-btn">Create New Session</button>
   <button id="terminate-btn" class="hidden">Terminate Session</button>
+  
   <div id="timer-bar" class="hidden">
     <div id="timer-progress"></div>
   </div>
+  
   <div id="status"></div>
+  
+  <div id="session-info" class="session-info hidden">
+    <strong>Session Active</strong><br>
+    <span id="session-details"></span>
+  </div>
+  
   <iframe id="hb-frame" class="hidden"></iframe>
+
   <script>
     let sessionId = null;
     let expiresAt = null;
     let timerInterval = null;
     let pingInterval = null;
     let csrfToken = null;
+    let isCreatingSession = false;
 
     async function getCsrfToken() {
-      const res = await fetch('/api/vm/csrf-token');
-      const json = await res.json();
-      csrfToken = json.csrfToken;
+      try {
+        const res = await fetch('/api/vm/csrf-token');
+        if (!res.ok) throw new Error('Failed to get CSRF token');
+        const json = await res.json();
+        csrfToken = json.csrfToken;
+        return true;
+      } catch (error) {
+        setStatus("Failed to initialize security token", "error");
+        return false;
+      }
     }
 
-    function setStatus(msg, error = false) {
+    function setStatus(msg, type = "info") {
       const el = document.getElementById('status');
       el.textContent = msg;
-      el.style.color = error ? "#b71c1c" : "#333";
+      el.className = `status-${type}`;
+      
+      // Auto-clear non-error messages after 10 seconds
+      if (type !== "error") {
+        setTimeout(() => {
+          if (el.textContent === msg) {
+            el.textContent = "";
+            el.className = "";
+          }
+        }, 10000);
+      }
+    }
+
+    function updateSessionInfo(sessionData) {
+      const infoEl = document.getElementById('session-info');
+      const detailsEl = document.getElementById('session-details');
+      
+      if (sessionData) {
+        const expireTime = new Date(sessionData.expiresAt).toLocaleTimeString();
+        detailsEl.innerHTML = `
+          Session ID: <code>${sessionData.id.substring(0, 8)}...</code><br>
+          Expires at: <span class="countdown">${expireTime}</span>
+        `;
+        infoEl.classList.remove('hidden');
+      } else {
+        infoEl.classList.add('hidden');
+      }
     }
 
     async function createSession() {
-      await getCsrfToken();
-      setStatus("Creating session...");
-      const res = await fetch('/api/vm', {
-        method: "POST",
-        headers: {
-          "x-csrf-token": csrfToken,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({})
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setStatus("Error: " + (data.error || "Unknown error") + (data.details ? "\nDetails: " + JSON.stringify(data.details) : ""), true);
-        return;
+      if (isCreatingSession) return;
+      
+      isCreatingSession = true;
+      const createBtn = document.getElementById('create-btn');
+      createBtn.disabled = true;
+      createBtn.textContent = "Creating Session...";
+      
+      try {
+        if (!(await getCsrfToken())) {
+          return;
+        }
+
+        setStatus("Creating session...", "info");
+        
+        const res = await fetch('/api/vm', {
+          method: "POST",
+          headers: {
+            "x-csrf-token": csrfToken,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({})
+        });
+        
+        const data = await res.json();
+        
+        if (!res.ok) {
+          if (res.status === 429) {
+            setStatus(`Rate limit exceeded: ${data.error}. Please try again in ${Math.ceil(data.retryAfter / 60)} minutes.`, "error");
+            showRateLimitNotice(data.retryAfter);
+          } else if (res.status === 403) {
+            setStatus("Security error: Please refresh the page and try again.", "error");
+          } else {
+            setStatus(`Error: ${data.error}${data.details ? ` (${data.details})` : ""}`, "error");
+          }
+          return;
+        }
+        
+        if (!data.id || !data.url || !data.expiresAt) {
+          setStatus("Invalid session data received from server.", "error");
+          return;
+        }
+        
+        sessionId = data.id;
+        expiresAt = data.expiresAt;
+        
+        document.getElementById('hb-frame').src = data.url;
+        document.getElementById('hb-frame').classList.remove('hidden');
+        document.getElementById('terminate-btn').classList.remove('hidden');
+        document.getElementById('timer-bar').classList.remove('hidden');
+        document.getElementById('create-btn').classList.add('hidden');
+        
+        updateSessionInfo(data);
+        setStatus("Session created successfully!", "success");
+        startTimer();
+        startPing();
+        
+      } catch (error) {
+        setStatus(`Network error: ${error.message}`, "error");
+      } finally {
+        isCreatingSession = false;
+        createBtn.disabled = false;
+        createBtn.textContent = "Create New Session";
       }
-      if (!data.id || !data.url || !data.expiresAt) {
-        setStatus("Backend error: missing session data.", true);
-        return;
-      }
-      sessionId = data.id;
-      expiresAt = data.expiresAt;
-      document.getElementById('hb-frame').src = data.url;
-      document.getElementById('hb-frame').classList.remove('hidden');
-      document.getElementById('terminate-btn').classList.remove('hidden');
-      document.getElementById('timer-bar').classList.remove('hidden');
-      document.getElementById('create-btn').classList.add('hidden');
-      setStatus("Session started! Expires in 4 minutes or after 30s inactivity.");
-      startTimer();
-      startPing();
+    }
+
+    function showRateLimitNotice(retryAfter) {
+      const notice = document.createElement('div');
+      notice.className = 'notice rate-limit-notice';
+      notice.innerHTML = `
+        <strong>Rate Limit Reached</strong><br>
+        You have reached the maximum of 2 sessions per IP address. 
+        Please wait ${Math.ceil(retryAfter / 60)} minutes before creating a new session.
+      `;
+      
+      // Insert after the main notice
+      const mainNotice = document.querySelector('.notice');
+      mainNotice.parentNode.insertBefore(notice, mainNotice.nextSibling);
+      
+      // Remove after delay
+      setTimeout(() => {
+        if (notice.parentNode) {
+          notice.parentNode.removeChild(notice);
+        }
+      }, retryAfter * 1000);
     }
 
     function startTimer() {
       const bar = document.getElementById('timer-progress');
+      const sessionDetails = document.getElementById('session-details');
+      
       function update() {
         const now = Date.now();
         const remaining = Math.max(0, expiresAt - now);
-        const percent = Math.max(0, (remaining / (4 * 60 * 1000)) * 100);
+        const total = 4 * 60 * 1000; // 4 minutes
+        const percent = Math.max(0, (remaining / total) * 100);
+        
         bar.style.width = percent + "%";
+        
+        // Update color based on remaining time
+        if (percent < 25) {
+          bar.style.background = "linear-gradient(90deg, #dc3545, #fd7e14)";
+        } else if (percent < 50) {
+          bar.style.background = "linear-gradient(90deg, #ffc107, #fd7e14)";
+        }
+        
+        // Update countdown in session info
+        if (sessionDetails && remaining > 0) {
+          const mins = Math.floor(remaining / 60000);
+          const secs = Math.floor((remaining % 60000) / 1000);
+          const countdownEl = sessionDetails.querySelector('.countdown');
+          if (countdownEl) {
+            countdownEl.textContent = `${mins}:${secs.toString().padStart(2, '0')} remaining`;
+          }
+        }
+        
         if (remaining <= 0) {
-          setStatus("Session expired.");
+          setStatus("Session expired due to time limit.", "error");
           cleanupSession();
         }
       }
+      
       update();
       timerInterval = setInterval(update, 1000);
     }
 
     function stopTimer() {
-      clearInterval(timerInterval);
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
       document.getElementById('timer-bar').classList.add('hidden');
     }
 
     function startPing() {
-      pingInterval = setInterval(() => {
-        fetch('/api/vm', {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId })
-        });
-      }, 10000); // every 10s
+      pingInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/vm', {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId })
+          });
+          
+          if (!res.ok) {
+            console.warn('Ping failed:', await res.text());
+            // If session not found, clean up
+            if (res.status === 404 || res.status === 403) {
+              setStatus("Session expired or access denied.", "error");
+              cleanupSession();
+            }
+          }
+        } catch (error) {
+          console.warn('Ping error:', error);
+        }
+      }, 10000); // every 10 seconds
     }
 
     function stopPing() {
-      clearInterval(pingInterval);
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
     }
 
     async function terminateSession() {
-      await getCsrfToken();
-      const res = await fetch('/api/vm', {
-        method: "DELETE",
-        headers: {
-          "x-csrf-token": csrfToken,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ sessionId })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setStatus("Session terminated.");
-      } else {
-        setStatus("Error terminating session: " + (data.error || "Unknown error"), true);
+      try {
+        if (!(await getCsrfToken())) {
+          return;
+        }
+        
+        setStatus("Terminating session...", "info");
+        
+        const res = await fetch('/api/vm', {
+          method: "DELETE",
+          headers: {
+            "x-csrf-token": csrfToken,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ sessionId })
+        });
+        
+        const data = await res.json();
+        
+        if (res.ok) {
+          setStatus("Session terminated successfully.", "success");
+        } else {
+          setStatus(`Error terminating session: ${data.error}`, "error");
+        }
+      } catch (error) {
+        setStatus(`Network error: ${error.message}`, "error");
       }
+      
       cleanupSession();
     }
 
     function cleanupSession() {
       stopPing();
       stopTimer();
+      updateSessionInfo(null);
+      
       document.getElementById('hb-frame').src = '';
       document.getElementById('hb-frame').classList.add('hidden');
       document.getElementById('terminate-btn').classList.add('hidden');
       document.getElementById('create-btn').classList.remove('hidden');
+      
       sessionId = null;
       expiresAt = null;
     }
 
+    // Event listeners
     document.getElementById('create-btn').onclick = createSession;
     document.getElementById('terminate-btn').onclick = terminateSession;
+    
+    // Handle page visibility changes to pause/resume activity pings
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && pingInterval) {
+        stopPing();
+      } else if (!document.hidden && sessionId && !pingInterval) {
+        startPing();
+      }
+    });
   </script>
 </body>
 </html>
