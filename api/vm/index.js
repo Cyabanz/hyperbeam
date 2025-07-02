@@ -82,27 +82,61 @@ async function terminateSession(sessionId, reason = 'timeout') {
 }
 
 module.exports = async function handler(req, res) {
+  console.log(`🚀 API Request: ${req.method} ${req.url}`);
+  console.log(`Headers:`, JSON.stringify(req.headers, null, 2));
+  
   // Set security headers
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   
   const clientIP = getClientIP(req);
+  console.log(`Client IP: ${clientIP}`);
   
   try {
     if (req.method === "POST") {
-      // CSRF protection
+      console.log("📝 POST request detected");
+      
+      // Parse cookies
       const cookies = cookie.parse(req.headers.cookie || "");
+      console.log("🍪 Cookies:", cookies);
+      
       const secret = cookies.csrfSecret;
       const csrfToken = req.headers["x-csrf-token"];
       
-      if (!secret || !csrfToken || !tokens.verify(secret, csrfToken)) {
+      console.log(`🔐 CSRF check - Secret: ${secret ? 'present' : 'missing'}, Token: ${csrfToken ? 'present' : 'missing'}`);
+      
+      if (!secret) {
+        console.log("❌ Missing CSRF secret");
+        return res.status(403).json({ error: "Missing CSRF secret" });
+      }
+      
+      if (!csrfToken) {
+        console.log("❌ Missing CSRF token");
+        return res.status(403).json({ error: "Missing CSRF token" });
+      }
+      
+      // Verify CSRF token
+      let csrfValid = false;
+      try {
+        csrfValid = tokens.verify(secret, csrfToken);
+        console.log(`🔐 CSRF verification result: ${csrfValid}`);
+      } catch (csrfError) {
+        console.error("🔐 CSRF verification error:", csrfError);
+        return res.status(403).json({ error: "CSRF verification failed" });
+      }
+      
+      if (!csrfValid) {
+        console.log("❌ Invalid CSRF token");
         return res.status(403).json({ error: "Invalid CSRF token" });
       }
 
       // Rate limiting check
       const ipSessions = rateLimitStore.get(clientIP) || [];
+      console.log(`🚦 Rate limit check - IP: ${clientIP}, Sessions: ${ipSessions.length}/${MAX_SESSIONS_PER_IP}`);
+      
       if (ipSessions.length >= MAX_SESSIONS_PER_IP) {
+        console.log("🚦 Rate limit exceeded");
         return res.status(429).json({ 
           error: `Rate limit exceeded. Maximum ${MAX_SESSIONS_PER_IP} sessions allowed per IP.`,
           retryAfter: 300
@@ -111,44 +145,57 @@ module.exports = async function handler(req, res) {
 
       // Validate API key
       const apiKey = process.env.HYPERBEAM_API_KEY;
+      console.log(`🔑 API Key check: ${apiKey ? 'present' : 'MISSING'}`);
+      
       if (!apiKey) {
-        console.error('Missing HYPERBEAM_API_KEY environment variable');
+        console.error('❌ Missing HYPERBEAM_API_KEY environment variable');
         return res.status(500).json({ error: "Service temporarily unavailable" });
       }
 
       // Create Hyperbeam session
+      console.log("🎯 Attempting to create Hyperbeam session...");
+      
       try {
+        const requestBody = {
+          timeout: Math.floor(SESSION_DURATION / 1000) // Set timeout in seconds
+        };
+        console.log("📤 Request body:", requestBody);
+        
         const hyperbeamResponse = await fetch("https://engine.hyperbeam.com/v0/vm", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            timeout: Math.floor(SESSION_DURATION / 1000) // Set timeout in seconds
-          }),
+          body: JSON.stringify(requestBody),
         });
+
+        console.log(`📥 Hyperbeam response status: ${hyperbeamResponse.status}`);
 
         if (!hyperbeamResponse.ok) {
           const errorText = await hyperbeamResponse.text();
-          console.error('Hyperbeam API error:', hyperbeamResponse.status, errorText);
+          console.error('❌ Hyperbeam API error:', hyperbeamResponse.status, errorText);
           return res.status(500).json({ 
             error: "Failed to create session",
-            details: hyperbeamResponse.status === 429 ? "Service temporarily overloaded" : undefined
+            details: hyperbeamResponse.status === 429 ? "Service temporarily overloaded" : `HTTP ${hyperbeamResponse.status}`
           });
         }
 
         const sessionData = await hyperbeamResponse.json();
+        console.log("📦 Session data received:", JSON.stringify(sessionData, null, 2));
+        
         const sessionId = sessionData.id;
         
         if (!sessionId || !sessionData.url) {
-          console.error('Invalid session data:', sessionData);
+          console.error('❌ Invalid session data:', sessionData);
           return res.status(500).json({ error: "Invalid session data received" });
         }
 
         const now = Date.now();
         const expiresAt = now + SESSION_DURATION;
 
+        console.log("⏱️ Setting up timers...");
+        
         // Setup timers
         const limitTimer = setTimeout(() => terminateSession(sessionId, 'time_limit'), SESSION_DURATION);
         let inactivityTimer = setTimeout(() => terminateSession(sessionId, 'inactivity'), INACTIVITY_TIMEOUT);
@@ -170,16 +217,19 @@ module.exports = async function handler(req, res) {
         // Update rate limiting
         rateLimitStore.set(clientIP, [...ipSessions, sessionId]);
 
+        console.log("✅ Session created successfully:", sessionId);
+
         return res.status(200).json({
           id: sessionId,
           url: sessionData.url,
           expiresAt
         });
+        
       } catch (fetchError) {
-        console.error('Fetch error when creating session:', fetchError);
+        console.error('❌ Fetch error when creating session:', fetchError);
         return res.status(500).json({ 
           error: "Failed to connect to session service",
-          details: process.env.NODE_ENV === 'development' ? fetchError.message : undefined
+          details: process.env.NODE_ENV === 'development' ? fetchError.message : "Network error"
         });
       }
 
@@ -253,14 +303,16 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
 
     } else {
+      console.log(`❌ Method not allowed: ${req.method}`);
       return res.status(405).json({ error: "Method not allowed" });
     }
     
   } catch (error) {
-    console.error('API Error:', error);
+    console.error('💥 Unexpected API Error:', error);
+    console.error('Stack trace:', error.stack);
     return res.status(500).json({ 
       error: "Internal server error",
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: process.env.NODE_ENV === 'development' ? error.message : "Unexpected error occurred"
     });
   }
 };
