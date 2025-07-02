@@ -1,6 +1,6 @@
-import Tokens from "csrf";
-import cookie from "cookie";
-import NodeCache from "node-cache";
+const Tokens = require("csrf");
+const cookie = require("cookie");
+const NodeCache = require("node-cache");
 
 const tokens = new Tokens();
 
@@ -80,7 +80,7 @@ async function terminateSession(sessionId, reason = 'timeout') {
   cleanupSession(sessionId);
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   // Set security headers
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -250,4 +250,4 @@ export default async function handler(req, res) {
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
-}
+};
