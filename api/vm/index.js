@@ -1,6 +1,7 @@
 const Tokens = require("csrf");
 const cookie = require("cookie");
 const NodeCache = require("node-cache");
+const fetch = require("node-fetch");
 
 const tokens = new Tokens();
 
@@ -111,73 +112,84 @@ module.exports = async function handler(req, res) {
       // Validate API key
       const apiKey = process.env.HYPERBEAM_API_KEY;
       if (!apiKey) {
+        console.error('Missing HYPERBEAM_API_KEY environment variable');
         return res.status(500).json({ error: "Service temporarily unavailable" });
       }
 
       // Create Hyperbeam session
-      const hyperbeamResponse = await fetch("https://engine.hyperbeam.com/v0/vm", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          timeout: Math.floor(SESSION_DURATION / 1000) // Set timeout in seconds
-        }),
-      });
+      try {
+        const hyperbeamResponse = await fetch("https://engine.hyperbeam.com/v0/vm", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            timeout: Math.floor(SESSION_DURATION / 1000) // Set timeout in seconds
+          }),
+        });
 
-      if (!hyperbeamResponse.ok) {
-        const errorText = await hyperbeamResponse.text();
-        console.error('Hyperbeam API error:', errorText);
+        if (!hyperbeamResponse.ok) {
+          const errorText = await hyperbeamResponse.text();
+          console.error('Hyperbeam API error:', hyperbeamResponse.status, errorText);
+          return res.status(500).json({ 
+            error: "Failed to create session",
+            details: hyperbeamResponse.status === 429 ? "Service temporarily overloaded" : undefined
+          });
+        }
+
+        const sessionData = await hyperbeamResponse.json();
+        const sessionId = sessionData.id;
+        
+        if (!sessionId || !sessionData.url) {
+          console.error('Invalid session data:', sessionData);
+          return res.status(500).json({ error: "Invalid session data received" });
+        }
+
+        const now = Date.now();
+        const expiresAt = now + SESSION_DURATION;
+
+        // Setup timers
+        const limitTimer = setTimeout(() => terminateSession(sessionId, 'time_limit'), SESSION_DURATION);
+        let inactivityTimer = setTimeout(() => terminateSession(sessionId, 'inactivity'), INACTIVITY_TIMEOUT);
+
+        // Store session
+        const session = {
+          id: sessionId,
+          clientIP,
+          createdAt: now,
+          lastActive: now,
+          expiresAt,
+          limitTimer,
+          inactivityTimer,
+          url: sessionData.url
+        };
+        
+        sessionStore.set(sessionId, session);
+        
+        // Update rate limiting
+        rateLimitStore.set(clientIP, [...ipSessions, sessionId]);
+
+        return res.status(200).json({
+          id: sessionId,
+          url: sessionData.url,
+          expiresAt
+        });
+      } catch (fetchError) {
+        console.error('Fetch error when creating session:', fetchError);
         return res.status(500).json({ 
-          error: "Failed to create session",
-          details: hyperbeamResponse.status === 429 ? "Service temporarily overloaded" : undefined
+          error: "Failed to connect to session service",
+          details: process.env.NODE_ENV === 'development' ? fetchError.message : undefined
         });
       }
-
-      const sessionData = await hyperbeamResponse.json();
-      const sessionId = sessionData.id;
-      
-      if (!sessionId || !sessionData.url) {
-        return res.status(500).json({ error: "Invalid session data received" });
-      }
-
-      const now = Date.now();
-      const expiresAt = now + SESSION_DURATION;
-
-      // Setup timers
-      const limitTimer = setTimeout(() => terminateSession(sessionId, 'time_limit'), SESSION_DURATION);
-      let inactivityTimer = setTimeout(() => terminateSession(sessionId, 'inactivity'), INACTIVITY_TIMEOUT);
-
-      // Store session
-      const session = {
-        id: sessionId,
-        clientIP,
-        createdAt: now,
-        lastActive: now,
-        expiresAt,
-        limitTimer,
-        inactivityTimer,
-        url: sessionData.url
-      };
-      
-      sessionStore.set(sessionId, session);
-      
-      // Update rate limiting
-      rateLimitStore.set(clientIP, [...ipSessions, sessionId]);
-
-      return res.status(200).json({
-        id: sessionId,
-        url: sessionData.url,
-        expiresAt
-      });
 
     } else if (req.method === "PATCH") {
       // Activity ping to reset inactivity timer
       let body;
       try {
         body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-      } catch {
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
         return res.status(400).json({ error: "Invalid JSON body" });
       }
 
@@ -223,7 +235,8 @@ module.exports = async function handler(req, res) {
       try {
         const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
         sessionId = body.sessionId;
-      } catch {
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
         return res.status(400).json({ error: "Invalid JSON body" });
       }
 
